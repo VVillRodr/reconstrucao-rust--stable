@@ -1,0 +1,10 @@
+target/
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+__pycache__/
+.venv/
+*.log

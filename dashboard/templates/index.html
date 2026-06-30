@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Status Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
+        .container { max-width: 960px; margin: auto; background: #ffffff; padding: 24px; border-radius: 12px; box-shadow: 0 0 30px rgba(0,0,0,0.08); }
+        h1 { margin-top: 0; }
+        .card { border: 1px solid #e1e5ea; border-radius: 10px; padding: 20px; margin-bottom: 16px; background: #fafbfc; }
+        .metric { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+        .label { font-size: 1rem; color: #333; }
+        .value { font-size: 1.5rem; font-weight: 700; color: #111; }
+        .error { color: #b71c1c; margin-top: 14px; }
+        .footer { color: #666; font-size: 0.9rem; margin-top: 16px; }
+        .refresh { display: inline-flex; align-items: center; padding: 10px 18px; background: #2563eb; color: #fff; border: none; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+        .refresh:hover { background: #1d4ed8; }
+        .charts { display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
+        canvas { width: 100% !important; height: 320px !important; }
+        @media (max-width: 760px) { .charts { grid-template-columns: 1fr; } }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Server Status Dashboard</h1>
+        <div class="card">
+            <div class="metric"><span class="label">CPU usage</span><span class="value" id="cpu">--</span></div>
+            <div class="metric"><span class="label">Memory used</span><span class="value" id="memory_used">--</span></div>
+            <div class="metric"><span class="label">Total memory</span><span class="value" id="total_memory">--</span></div>
+            <div class="metric"><span class="label">Status</span><span class="value" id="status_text">--</span></div>
+        </div>
+
+        <div class="card">
+            <h2>Queue Info</h2>
+            <div class="metric"><span class="label">Queued jobs</span><span class="value" id="queued_jobs">--</span></div>
+            <div class="metric"><span class="label">Active jobs</span><span class="value" id="active_jobs">--</span></div>
+        </div>
+
+        <div class="card">
+            <h2>Request Statistics</h2>
+            <div class="metric"><span class="label">Total requests</span><span class="value" id="total_requests">--</span></div>
+            <div class="metric"><span class="label">Rejected requests</span><span class="value" id="rejected_requests">--</span></div>
+            <div class="metric"><span class="label">Completed requests</span><span class="value" id="completed_requests">--</span></div>
+        </div>
+
+        <div class="card charts">
+            <div>
+                <h2>CPU Usage</h2>
+                <canvas id="cpuChart"></canvas>
+            </div>
+            <div>
+                <h2>Memory Usage</h2>
+                <canvas id="memoryChart"></canvas>
+            </div>
+        </div>
+
+        <button class="refresh" onclick="fetchStatus()">Atualizar agora</button>
+        <p class="footer">O dashboard consulta o servidor em <code>/status</code> e não o servidor de reconstrução diretamente.</p>
+        <div id="error" class="error"></div>
+    </div>
+    <script>
+        const cpuData = { labels: [], datasets: [{ label: 'CPU (%)', borderColor: '#2563eb', backgroundColor: 'rgba(37, 99, 235, 0.15)', fill: true, tension: 0.35, borderWidth: 2, pointRadius: 2, data: [] }] };
+        const memoryData = { labels: [], datasets: [{ label: 'Memory used (MB)', borderColor: '#059669', backgroundColor: 'rgba(5, 150, 105, 0.15)', fill: true, tension: 0.35, borderWidth: 2, pointRadius: 2, data: [] }] };
+
+        const cpuChart = new Chart(document.getElementById('cpuChart'), {
+            type: 'line',
+            data: cpuData,
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { beginAtZero: true, max: 100 } } }
+        });
+        const memoryChart = new Chart(document.getElementById('memoryChart'), {
+            type: 'line',
+            data: memoryData,
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { beginAtZero: true } } }
+        });
+
+        async function fetchStatus() {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = '';
+            try {
+                const resp = await fetch('/status');
+                if (!resp.ok) {
+                    const data = await resp.json();
+                    throw new Error(data.detail || 'Falha ao buscar status');
+                }
+                const body = await resp.json();
+                document.getElementById('cpu').textContent = `${body.cpu_usage.toFixed(1)} %`;
+                document.getElementById('memory_used').textContent = `${body.memory_usage_mb} MB`;
+                document.getElementById('total_memory').textContent = `${body.total_memory_mb} MB`;
+                document.getElementById('status_text').textContent = 'OK';
+                document.getElementById('queued_jobs').textContent = body.queued_jobs || 0;
+                document.getElementById('active_jobs').textContent = body.active_jobs || 0;
+                document.getElementById('total_requests').textContent = body.total_requests || 0;
+                document.getElementById('rejected_requests').textContent = body.rejected_requests || 0;
+                document.getElementById('completed_requests').textContent = body.completed_requests || 0;
+
+                addPoint(cpuData, body.cpu_usage.toFixed(1));
+                addPoint(memoryData, body.memory_usage_mb);
+                cpuChart.update();
+                memoryChart.update();
+            } catch (err) {
+                document.getElementById('cpu').textContent = '--';
+                document.getElementById('memory_used').textContent = '--';
+                document.getElementById('total_memory').textContent = '--';
+                document.getElementById('status_text').textContent = 'ERRO';
+                document.getElementById('queued_jobs').textContent = '--';
+                document.getElementById('active_jobs').textContent = '--';
+                document.getElementById('total_requests').textContent = '--';
+                document.getElementById('rejected_requests').textContent = '--';
+                document.getElementById('completed_requests').textContent = '--';
+                errorEl.textContent = err.message;
+            }
+        }
+
+        function addPoint(chartData, value) {
+            const now = new Date().toLocaleTimeString();
+            chartData.labels.push(now);
+            chartData.datasets[0].data.push(value);
+            if (chartData.labels.length > 12) {
+                chartData.labels.shift();
+                chartData.datasets[0].data.shift();
+            }
+        }
+
+        fetchStatus();
+        setInterval(fetchStatus, 5000);
+    </script>
+</body>
+</html>

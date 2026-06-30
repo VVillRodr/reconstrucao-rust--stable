@@ -1,0 +1,24 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+chrono = "0.4"
+sysinfo = "0.30"
+image = "0.25"
+
+# Dependências para computação e leitura de arquivos
+ndarray = "0.15"
+csv = "1.3"
+uuid = { version = "1.8", features = ["v4"] }
+num_cpus = "1.16"
+once_cell = "1.19"
+hashbrown = "0.14"
