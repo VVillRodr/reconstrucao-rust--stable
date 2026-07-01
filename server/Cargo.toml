@@ -16,7 +16,9 @@ sysinfo = "0.30"
 image = "0.25"
 
 # Dependências para computação e leitura de arquivos
-ndarray = "0.15"
+ndarray = { version = "0.15", features = ["blas"] }
+blas-src = { version = "0.10", features = ["intel-mkl"] }
+intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-seq"] }
 csv = "1.3"
 uuid = { version = "1.8", features = ["v4"] }
 num_cpus = "1.16"

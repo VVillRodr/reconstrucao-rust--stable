@@ -1,0 +1,7 @@
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-L", "C:\\Program Files (x86)\\Intel\\oneAPI\\mkl\\latest\\lib",
+    "-l", "mkl_intel_lp64",
+    "-l", "mkl_sequential",
+    "-l", "mkl_core",
+]
