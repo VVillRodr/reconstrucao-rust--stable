@@ -46,22 +46,21 @@ pub fn read_vector_from_csv(file_path: &str) -> Result<Array1<f64>, Box<dyn Erro
 }
 
 
-
 pub fn execute_cgnr(
     algorithm_id: &str,
     user_id: Uuid,
     h: &Array2<f64>,
     g_signal: &Array1<f64>,
-    image_pixels: (usize, usize), // <-- PARÂMETRO ADICIONADO
+    image_pixels: (usize, usize), 
 ) -> ReconstructionResult {
     let start_time = Utc::now();
     let s = h.shape()[0];
     let n = h.shape()[1];
     
-    
+    // A lógica do algoritmo permanece a mesma
     let mut g = g_signal.clone();
     for l in 0..s {
-        let gamma_l = (100.0 + 0.05 * (l as f64)*(l as f64).sqrt());
+        let gamma_l = (100.0 + 0.05 * (l as f64) * (l as f64).sqrt());
         g[l] *= gamma_l;
     }
     let mut f = Array1::<f64>::zeros(n);
@@ -70,11 +69,11 @@ pub fn execute_cgnr(
     let mut p = z.clone();
     let mut z_t_z = z.dot(&z);
     let max_iterations = 10;
-    let mut i = 0;
+    let mut iterations = 0;
     let convergence_threshold = 1e-4;
 
     for iteration_count in 0..max_iterations {
-        i = iteration_count;
+        iterations = iteration_count + 1;
         let w = h.dot(&p);
         let w_t_w = w.dot(&w);
         if w_t_w.abs() < 1e-20 { break; }
@@ -84,7 +83,7 @@ pub fn execute_cgnr(
         let z_next = h.t().dot(&r);
         let z_t_z_next = z_next.dot(&z_next);
         if z_t_z_next < convergence_threshold {
-            println!("[Servidor] CGNR convergiu na iteração {}", i + 1);
+            println!("[Servidor] CGNR convergiu na iteração {}", iterations);
             break;
         }
         if z_t_z.abs() < 1e-20 { break; }
@@ -102,12 +101,35 @@ pub fn execute_cgnr(
         start_time,
         end_time,
         reconstruction_time_ms,
-        image_pixels, // <-- USA O PARÂMETRO DIRETAMENTE
-        iterations: i + 1,
+        image_pixels, // 
+        iterations,
         f,
     }
 }
 
+
+fn spectral_norm_hth(h: &Array2<f64>, power_iterations: usize) -> f64 {
+    let n = h.shape()[1];
+    let mut v = Array1::<f64>::from_elem(n, 1.0 / (n as f64).sqrt());
+
+    for _ in 0..power_iterations {
+        let hv = h.dot(&v);
+        let htv = h.t().dot(&hv);
+        let norm = htv.dot(&htv).sqrt();
+        if norm < 1e-20 {
+            break;
+        }
+        v = &htv / norm;
+    }
+
+    let hv = h.dot(&v);
+    let htv = h.t().dot(&hv);
+    let v_dot_v = v.dot(&v);
+    if v_dot_v.abs() < 1e-20 {
+        return 0.0;
+    }
+    v.dot(&htv) / v_dot_v
+}
 
 pub fn execute_cgne(
     algorithm_id: &str,
@@ -119,42 +141,92 @@ pub fn execute_cgne(
     let start_time = Utc::now();
     let s = h.shape()[0];
     let n = h.shape()[1];
- 
+
+    // --- Ganho de sinal (γ_l), l = 1..S ---
     let mut g = g_signal.clone();
     for l in 0..s {
-        let gamma_l = (100.0 + 0.05 * (l as f64)*(l as f64).sqrt());
+        let l_1idx = (l + 1) as f64;
+        let gamma_l = 100.0 + 0.05 * l_1idx * l_1idx.sqrt();
         g[l] *= gamma_l;
     }
+
+    // --- Fator de redução: c = ||H^T * H||_2 ---
+    let c = spectral_norm_hth(h, 100);
+    let c_safe = if c.abs() < 1e-20 { 1.0 } else { c };
+    println!("[CGNE] fator de redução c = {:.6}", c_safe);
+
+    // --- H^T * g (usado tanto para λ quanto para o resíduo inicial) ---
+    let htg = h.t().dot(&g);
+
+    // --- Coeficiente de regularização: λ = max(abs(H^T*g)) * 0.10 ---
+    let lambda = htg.iter().fold(0.0_f64, |acc, &v| acc.max(v.abs())) * 0.10;
+    println!("[CGNE] lambda = {:.6}", lambda);
+
+    let lambda_scaled = lambda / c_safe;
+
+    // Aplica M = (H^T H + λI) / c a um vetor p, sem montar H^T H explicitamente
+    let apply_m = |p: &Array1<f64>| -> Array1<f64> {
+        let hp = h.dot(p);
+        let hthp = h.t().dot(&hp);
+        (&hthp / c_safe) + &(p * lambda_scaled)
+    };
+
+    // --- Inicialização (f0 = 0 => r0 = H^T*g / c, resolvendo M*f = H^T*g / c) ---
     let mut f = Array1::<f64>::zeros(n);
-    let mut r = g;
-    let mut p = h.t().dot(&r);
+    let mut r = &htg / c_safe;
+    let mut r_norm = r.dot(&r).sqrt();
+    let mut p = r.clone();
     let mut r_t_r = r.dot(&r);
-    let max_iterations = 3;
-    let mut i = 0;
+
+    let max_iterations = 10;
+    let mut iterations = 0;
     let convergence_threshold = 1e-4;
- 
+
+    println!("[CGNE] ||r_0|| = {:.6}", r_norm);
+
     for iteration_count in 0..max_iterations {
-        i = iteration_count;
-        let p_t_p = p.dot(&p);
-        if p_t_p.abs() < 1e-20 { break; }
-        let w = h.dot(&p);
-        let alpha = r_t_r / p_t_p;
-        f += &(&p * alpha);
-        r -= &(&w * alpha);
-        let r_t_r_next = r.dot(&r);
-        if r_t_r_next < convergence_threshold {
-            println!("[Servidor] CGNE convergiu na iteração {}", i + 1);
+        iterations = iteration_count + 1;
+
+        let mp = apply_m(&p);
+        let p_t_mp = p.dot(&mp);
+        if p_t_mp.abs() < 1e-20 {
+            println!("[CGNE] p^T*M*p ~ 0, parando (direção degenerada)");
             break;
         }
-        if r_t_r.abs() < 1e-20 { break; }
+
+        let alpha = r_t_r / p_t_mp;
+        f += &(&p * alpha);
+        r -= &(&mp * alpha);
+
+        let r_norm_next = r.dot(&r).sqrt();
+        let epsilon = (r_norm_next - r_norm).abs();
+        let r_t_r_next = r.dot(&r);
+
+        println!(
+            "[CGNE] iter {}: ||r|| = {:.6}, epsilon = {:.6}",
+            iterations, r_norm_next, epsilon
+        );
+
+        if epsilon < convergence_threshold {
+            println!("[Servidor] CGNE convergiu na iteração {}", iterations);
+            break;
+        }
+
+        if r_t_r.abs() < 1e-20 {
+            println!("[CGNE] r^T*r ~ 0, parando (resíduo nulo)");
+            break;
+        }
+
         let beta = r_t_r_next / r_t_r;
-        p = h.t().dot(&r) + &(&p * beta);
+        p = &r + &(&p * beta);
+
         r_t_r = r_t_r_next;
+        r_norm = r_norm_next;
     }
- 
+
     let end_time = Utc::now();
     let reconstruction_time_ms = end_time.signed_duration_since(start_time).num_milliseconds();
- 
+
     ReconstructionResult {
         user_id,
         algorithm_id: algorithm_id.to_string(),
@@ -162,11 +234,10 @@ pub fn execute_cgne(
         end_time,
         reconstruction_time_ms,
         image_pixels,
-        iterations: i + 1,
+        iterations,
         f,
     }
 }
- 
 
 /// Salva a imagem reconstruída e retorna o nome do arquivo.
 pub fn save_image(result: &ReconstructionResult) -> Result<String, Box<dyn Error>> {
@@ -175,21 +246,25 @@ pub fn save_image(result: &ReconstructionResult) -> Result<String, Box<dyn Error
         return Err("Dimensões da imagem não correspondem ao tamanho do vetor 'f'".into());
     }
 
-    // Inverte a imagem verticalmente para a orientação correta
-    let mut flipped_f = Vec::with_capacity(result.f.len());
-    for row_chunk in result.f.as_slice().unwrap().chunks(width).rev() {
-        flipped_f.extend_from_slice(row_chunk);
+    let f_slice = result.f.as_slice().unwrap();
+    let mut image_values = Vec::with_capacity(result.f.len());
+
+    // Reordena os valores no mesmo formato Fortran do Python (reshape(order='F'))
+    // e inverte verticalmente para corresponder ao comportamento anterior.
+    for row in (0..height).rev() {
+        for col in 0..width {
+            image_values.push(f_slice[col * height + row].abs());
+        }
     }
-    
-    // Normaliza os valores de f64 para u8 (0-255)
-    let f_min = flipped_f.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-    let f_max = flipped_f.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+
+    let f_min = image_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let f_max = image_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
     let range = f_max - f_min;
 
     let image_buffer: Vec<u8> = if range.abs() < 1e-9 {
-        vec![0; flipped_f.len()]
+        vec![0; image_values.len()]
     } else {
-        flipped_f.iter().map(|&val| (((val - f_min) / range) * 255.0) as u8).collect()
+        image_values.iter().map(|&val| (((val - f_min) / range) * 255.0) as u8).collect()
     };
     
     let file_name = format!("img_{}_{}_{}.png", result.user_id, result.algorithm_id, result.end_time.timestamp());

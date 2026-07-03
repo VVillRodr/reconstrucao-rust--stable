@@ -95,7 +95,7 @@ fn write_report_entry(result: &ReconstructionResult, image_filename: &str) -> st
         .open(REPORT_FILE)?;
 
     if is_empty {
-        // ALTERADO: Cabeçalho do CSV atualizado
+        
         writeln!(file, "user_id,algorithm_id,start_time,end_time,reconstruction_ms,image_pixels,iterations,image_filename")?;
     }
     
@@ -126,19 +126,14 @@ async fn main() {
     sys.refresh_memory();
     sys.refresh_cpu();
 
-    let total_ram_mb = sys.total_memory() / 1024 / 1024;
-    const MEMORY_UNIT_MB: u64 = 512;
-    let total_memory_units = (total_ram_mb / MEMORY_UNIT_MB).max(1) as usize;
     let thread_limit = num_cpus::get().max(1);
-    let queue_capacity = total_memory_units;
+    const QUEUE_CAPACITY: usize = 100000; // Fila livre para receber requisições
     
     // declaração do semáforo para limitar o número de threads ativas
     let thread_semaphore = Arc::new(ThreadSemaphore::new(thread_limit));
     println!(
-        "[Servidor] Iniciando com {} thread(s) de execução e fila de {} jobs baseada em memória (~{} MB cada).",
-        thread_limit,
-        queue_capacity,
-        MEMORY_UNIT_MB
+        "[Servidor] Iniciando com {} thread(s) de execução e fila livre para requisições.",
+        thread_limit
     );
 
     // Pré-carrega as planilhas H e todos os sinais g/G disponíveis.
@@ -168,8 +163,8 @@ async fn main() {
     }
     println!("[Servidor] Pré-carregou {} sinais e {} matrizes H com sucesso.", signal_cache.len(), h_cache.len());
 
-    //fila de jobs com capacidade dinamica a memoria disponível
-    let (job_sender, job_receiver) = mpsc::sync_channel::<ReconstructionJob>(queue_capacity);
+    //fila de jobs com capacidade livre
+    let (job_sender, job_receiver) = mpsc::sync_channel::<ReconstructionJob>(QUEUE_CAPACITY);
     
     
     
@@ -339,7 +334,7 @@ async fn main() {
                 }
 
                 if job.responder.send(result).is_err() {
-                    eprintln!("[Worker-{}] Falha ao enviar resposta. O cliente provavelmente desistiu.", worker_id);
+                    eprintln!("[Worker-{}] Falha ao enviar resposta. O cliente desistiu?", worker_id);
                 }
 
                 metrics.active_jobs.fetch_sub(1, Ordering::Relaxed);

@@ -15,6 +15,7 @@ chrono = "0.4"
 sysinfo = "0.30"
 image = "0.25"
 
+
 # Dependências para computação e leitura de arquivos
 ndarray = { version = "0.15", features = ["blas"] }
 blas-src = { version = "0.10", features = ["intel-mkl"] }
